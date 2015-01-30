@@ -8,8 +8,11 @@ namespace MsiDumper
 {
     class MsiShortCuts
     {
+        public string ShortCut { get; set; }
+        public string StartMenuDirectory { get; set; }
         public string Name { get; set; }
-        public string Target { get; set; }
+        public string ShortCutTarget { get; set; }
+        public string workingDir { get; set; }
 
     }
 }

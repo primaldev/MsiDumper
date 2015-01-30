@@ -41,6 +41,8 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="MsiCustomAction.cs" />
+    <Compile Include="MsiDirectory.cs" />
     <Compile Include="MsiProperties.cs" />
     <Compile Include="MsiShortCuts.cs" />
     <Compile Include="ParseMsi.cs" />

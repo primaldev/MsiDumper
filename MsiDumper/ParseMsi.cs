@@ -54,17 +54,119 @@ namespace MsiDumper
         {
             if (varName[0].Equals("[") && varName[varName.Length -1].Equals("]")) 
             {
-                if (varName[1].Equals("#") || varName[1].Equals("~") || varName[1].Equals("@"))
+
+                if (varName[1].Equals("#") || varName[1].Equals("~") || varName[1].Equals("$"))
                 {
-                    //parse filname
+                    
+                    
                 }
                 else
                 {
                     //check for featuretable
+
+                    //Custom action overule all
+
+
                 }
             }
         }
 
+
+        private bool isAdvertised(string Name)
+        {
+            WindowsInstaller.View view = queryMsi("SELECT * FROM `Feature` where Feature='" + Name + "'");
+            Record record = view.Fetch();
+
+            if (record != null)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private MsiComponent getComponent(string componentName)
+        {
+            WindowsInstaller.View view = queryMsi("SELECT * FROM `Component` where Component='" + componentName + "'");
+
+            Record record = view.Fetch();
+            MsiComponent msiComponent = new MsiComponent();
+            while (record != null)
+            {
+                msiComponent.ComponentName = record.get_StringData(1);
+                msiComponent.ComponentId = record.get_StringData(2);
+                msiComponent.Directory = record.get_StringData(3);
+                msiComponent.Atribute = record.get_IntegerData(4);
+                msiComponent.Condition = record.get_StringData(5);
+                msiComponent.KeyPath = record.get_StringData(6);
+                view.Fetch();
+            }
+
+
+            return msiComponent;
+        }
+
+        
+        private MsiFile getFile(string File)
+        {
+             WindowsInstaller.View view = queryMsi("SELECT * FROM `File` where File='" + File + "'");
+
+            Record record = view.Fetch();
+            MsiFile msiFile = new MsiFile();
+            while (record != null)
+            {
+                msiFile.File = record.get_StringData(1);
+                msiFile.Component = record.get_StringData(2);
+                msiFile.FileName = record.get_StringData(3);
+                msiFile.FileSize = record.get_IntegerData(4);
+                msiFile.Version = record.get_StringData(5);
+                msiFile.Language = record.get_StringData(6);
+                msiFile.Attribute = record.get_IntegerData(7);
+                
+                view.Fetch();
+            }
+
+            return msiFile;
+
+        }
+
+        private MsiRegistry getRegistry(string Registry)
+        {
+            WindowsInstaller.View view = queryMsi("SELECT * FROM `Registry` where Registry='" + Registry + "'");
+
+            Record record = view.Fetch();
+            MsiRegistry msiRegistry = new MsiRegistry();
+            while (record != null)
+            {
+                msiRegistry.Registry = record.get_StringData(1);
+                msiRegistry.Root = record.get_IntegerData(2);
+                msiRegistry.Key = record.get_StringData(3);
+                msiRegistry.Name = record.get_StringData(4);
+                msiRegistry.Value = record.get_StringData(5);
+                msiRegistry.Component = record.get_StringData(6);
+                view.Fetch();
+            }
+
+            return msiRegistry;
+        }
+
+
+        private WindowsInstaller.View queryMsi(String query)
+        {
+            WindowsInstaller.View view = null;
+            try
+            {
+                view = database.OpenView(query);
+                view.Execute();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Unable to query msi, " + ex.Message);
+            }
+
+
+            return view;
+        }
 
         private string getCustomActionPathset(String varName)
         {

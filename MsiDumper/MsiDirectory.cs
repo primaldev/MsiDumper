@@ -24,5 +24,13 @@ namespace MsiDumper
             
         }
 
+        public string getDefaultDirLongName()
+        {
+
+            string[] splitdir = DefaultDir.Split('|');
+
+            return splitdir[splitdir.Length - 1];
+        }
+
     }
 }

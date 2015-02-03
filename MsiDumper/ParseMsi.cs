@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using WindowsInstaller;
 
@@ -47,28 +48,106 @@ namespace MsiDumper
             parseProperties();
         }
 
-        
+        //go through the levels of msi to determen the final value of a property
+        private string resolveProperty(string property)
+        {
+
+            string resProp;
+
+            
+
+            resProp = getCustomActionPathSet(property);
+
+            if (resProp != null)
+            {
+                return resProp; // not yet
+            }
+
+            resProp = getMsiProperty(property);
+
+            if (resProp != null)
+            {
+                return resProp;
+            }
 
 
-        private void getPath(String varName)
+
+            //1) custom action
+            //2) property            
+            //3) directory table
+
+            return null;
+        }
+
+        //enumerate the Directory table to build a path string
+        private string getFullDirectoryPath(string directory)
+        {
+            String fullDirPath = "";
+            Boolean hasParent = true;
+            int loopcount = 256; //prevent endless loop
+
+            MsiDirectory msiDirectory = (MsiDirectory) directoryTable[directory];
+            while(hasParent){
+                
+                if (msiDirectory != null) 
+                {
+                    fullDirPath = fullDirPath + "\\" + msiDirectory.getDefaultDirLongName();
+
+
+                    if (msiDirectory.DirectoryParent != null & msiDirectory.DirectoryParent.Length > 0 && msiDirectory.Directory.ToLower().Equals(msiDirectory.DirectoryParent.ToLower()) && loopcount > 0)
+                    {
+                        msiDirectory = (MsiDirectory)directoryTable[directory];
+                    }
+                    else
+                    {
+                        hasParent = false;
+                    }
+
+                    loopcount--;
+                }
+               
+            }
+            return fullDirPath;
+
+        }
+
+
+        private string resolveMsiVar(String varName) //
         {
             if (varName[0].Equals("[") && varName[varName.Length -1].Equals("]")) 
             {
 
-                if (varName[1].Equals("#") || varName[1].Equals("~") || varName[1].Equals("$"))
+                if (varName[1].Equals("#") || varName[1].Equals("!")  )
                 {
+                    string cvar = Regex.Replace(varName, @"[\[\]\#\!]+", "");
+                    MsiFile msiFile = getFile(cvar);
+                    if (msiFile != null)
+                    {
+                        MsiComponent msiComponent = getComponent(msiFile.Component);
+
+                        if (msiComponent != null)
+                        {
+                            return msiComponent.Directory; //not yet
+                        }
+                    }
+
                     
-                    
-                }
+                } 
+                else if(varName[1].Equals("$"))                 
+                {
+
+
+                }              
                 else
                 {
                     //check for featuretable
-
+                    //check for properties
                     //Custom action overule all
 
 
                 }
             }
+            return null;
         }
 
 
@@ -106,7 +185,15 @@ namespace MsiDumper
             return msiComponent;
         }
 
-        
+        private string getMsiProperty(string property)
+        {
+            WindowsInstaller.View view = queryMsi("SELECT * FROM `Property` where Property='" + property + "'");
+
+            Record record = view.Fetch();
+
+            return record.get_StringData(2);
+        }
+
         private MsiFile getFile(string File)
         {
              WindowsInstaller.View view = queryMsi("SELECT * FROM `File` where File='" + File + "'");
@@ -168,7 +255,7 @@ namespace MsiDumper
             return view;
         }
 
-        private string getCustomActionPathset(String varName)
+        private string getCustomActionPathSet(String varName)
         {
             String resPath = null;
             WindowsInstaller.View view = null;

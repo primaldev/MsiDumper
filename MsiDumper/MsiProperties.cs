@@ -6,14 +6,13 @@ using System.Threading.Tasks;
 
 namespace MsiDumper
 {
-    class MsiProperties
+    public class MsiProperties
     {
 
 
         public string ArpComments { get; set; }
         public string Manufacturer { get; set; }
-        public string ProductName { get; set; }
-        public string ArpComments { get; set; }
+        public string ProductName { get; set; }       
         public string ArpHelpLink { get; set; }
         public string ArpContact { get; set; }
         public string AllUsers { get; set; }

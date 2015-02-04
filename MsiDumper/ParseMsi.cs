@@ -1,10 +1,12 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using System.Xml.Serialization;
 using WindowsInstaller;
 
 
@@ -46,57 +48,94 @@ namespace MsiDumper
             
             parseDirectory();
             parseProperties();
+            parseShortcuts();
+
+
+            Console.Write(genXML(msiProperties));
         }
 
-        //go through the levels of msi to determen the final value of a property
-        private string resolveProperty(string property)
+
+        private string genXML(MsiProperties msiProperties)
         {
-
-            string resProp;
-
-            
-
-            resProp = getCustomActionPathSet(property);
-
-            if (resProp != null)
+            XmlSerializer serializer = new XmlSerializer(typeof(MsiProperties));
+            using (StringWriter writer = new StringWriter())
             {
-                return resProp; // not yet
+                serializer.Serialize(writer, msiProperties);
+
+                return writer.ToString();
             }
 
-            resProp = getMsiProperty(property);
-
-            if (resProp != null)
-            {
-                return resProp;
-            }
-
-
-
-            //1) custom action
-            //2) property            
-            //3) directory table
-
-            return null;
         }
 
+        private void parseShortcuts()
+        {
+            WindowsInstaller.View view = queryMsi("SELECT * FROM `Shortcut`");
+
+            Record record = view.Fetch();
+
+            while (record != null)
+            {
+                MsiShortCuts msiShortcut = new MsiShortCuts();
+                msiShortcut.ShortCut = record.get_StringData(1);
+                msiShortcut.StartMenuDirectory = resolveMsiVar(record.get_StringData(2));
+                msiShortcut.Name = record.get_StringData(3);
+                msiShortcut.Component = record.get_StringData(4);
+
+                if (isAdvertised(record.get_StringData(5))) 
+                {
+                    MsiComponent msiComponent = getComponent(record.get_StringData(5));
+
+                    if (msiComponent != null)
+                    {
+                       msiShortcut.ShortCutTarget = resolveMsiVar(msiComponent.KeyPath);
+                    }
+                    else
+                    {
+                        Console.WriteLine("Error getting shortcut component");
+                    }
+
+                }
+                else
+                {
+                   msiShortcut.ShortCutTarget = resolveMsiVar(record.get_StringData(5));
+                }
+
+
+                msiShortcut.workingDir = record.get_StringData(12);
+                //msiProperties.Shortcuts.Add(msiShortcut);
+                record = view.Fetch();
+            }
+        }
+
+   
         //enumerate the Directory table to build a path string
         private string getFullDirectoryPath(string directory)
         {
+            
             String fullDirPath = "";
             Boolean hasParent = true;
             int loopcount = 256; //prevent endless loop
 
-            MsiDirectory msiDirectory = (MsiDirectory) directoryTable[directory];
-            while(hasParent){
-                
-                if (msiDirectory != null) 
+            if (directory != null)
+            {
+                MsiDirectory msiDirectory = (MsiDirectory)directoryTable[directory];
+
+                while (hasParent)
                 {
-                    fullDirPath = fullDirPath + "\\" + msiDirectory.getDefaultDirLongName();
-
-
-                    if (msiDirectory.DirectoryParent != null & msiDirectory.DirectoryParent.Length > 0 && msiDirectory.Directory.ToLower().Equals(msiDirectory.DirectoryParent.ToLower()) && loopcount > 0)
+                    
+                    if (msiDirectory != null)
                     {
-                        msiDirectory = (MsiDirectory)directoryTable[directory];
+                        fullDirPath = fullDirPath + "\\" + msiDirectory.getDefaultDirLongName();
+
+                        if (msiDirectory.DirectoryParent != null & msiDirectory.DirectoryParent.Length > 0 && msiDirectory.Directory.ToLower().Equals(msiDirectory.DirectoryParent.ToLower()) && loopcount > 0)
+                        {
+                            msiDirectory = (MsiDirectory)directoryTable[directory];
+                        }
+                        else
+                        {
+                            hasParent = false;
+                        }
+
                     }
                     else
                     {
@@ -105,49 +144,84 @@ namespace MsiDumper
 
                     loopcount--;
                 }
-               
             }
             return fullDirPath;
 
         }
 
 
-        private string resolveMsiVar(String varName) //
+        private string resolveMsiVar(String varNames) //
         {
-            if (varName[0].Equals("[") && varName[varName.Length -1].Equals("]")) 
+           
+            string fullPath = "";
+            string[] varNameAr = varNames.Split(new char[] { '[', ']' }, StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (string varName in varNameAr)
             {
-
-                if (varName[1].Equals("#") || varName[1].Equals("!")  )
-                {
-                    string cvar = Regex.Replace(varName, @"[\[\]\#\!]+", "");
-                    MsiFile msiFile = getFile(cvar);
-                    if (msiFile != null)
+                
+                    if (varName[0].Equals("#") || varName[0].Equals("!"))
                     {
-                        MsiComponent msiComponent = getComponent(msiFile.Component);
-
-                        if (msiComponent != null)
+                        string cvar = Regex.Replace(varName, @"[\#\!]+", "");
+                        MsiFile msiFile = getFile(cvar);
+                        if (msiFile != null)
                         {
-                            return msiComponent.Directory; //not yet
+
+                            fullPath += "\\" + getComponentFullDir(msiFile.Component);                     
+                            
                         }
+
                     }
+                    else if (varName[0].Equals("$"))
+                    {
+                        string evar = Regex.Replace(varName, @"[\#\!]+", "");
+                        fullPath += "\\" + getComponentFullDir(evar);
 
-                    
-                } 
-                else if(varName[1].Equals("$"))                 
-                {
+                    }
+                    else
+                    {
+                        
+                        //check custom action table                        
+                        string resProp = getCustomActionPathSet(varName); //TODO: resolve the condition field as custom action might not be used
 
+                        if (resProp != null)
+                        {
+                            if (resProp.IndexOf("[") > 0)
+                            {
+                                fullPath += "\\" + resolveMsiVar(resProp);
+                            }
+                            else
+                            {
+                                fullPath += "\\" + getFullDirectoryPath(resProp);
+                            }
 
-                }              
-                else
-                {
-                    //check for featuretable
-                    //check for properties
-                    //Custom action overule all
+                            return fullPath;
+                        }
 
+                        string rsProp = getMsiProperty(varName);
 
-                }
+                        if (rsProp != null)
+                        {
+                            fullPath += "\\" + rsProp;
+                        }
+
+                        fullPath += "\\" + getFullDirectoryPath(getCustomActionPathSet(varName));
+
+                    }
+                
             }
-            return null;
+            return fullPath;
+        }
+
+        private string getComponentFullDir(string component) //limited
+        {
+            Console.WriteLine("GetcomponentFulldir");
+            MsiComponent msiComponent = getComponent(component);
+            if (msiComponent != null)
+            {
+                return getFullDirectoryPath(msiComponent.Directory);
+            }
+
+            return ""; //not null but emty string
         }
 
 
@@ -170,7 +244,7 @@ namespace MsiDumper
 
             Record record = view.Fetch();
             MsiComponent msiComponent = new MsiComponent();
-            while (record != null)
+            if (record != null)
             {
                 msiComponent.ComponentName = record.get_StringData(1);
                 msiComponent.ComponentId = record.get_StringData(2);
@@ -178,7 +252,7 @@ namespace MsiDumper
                 msiComponent.Atribute = record.get_IntegerData(4);
                 msiComponent.Condition = record.get_StringData(5);
                 msiComponent.KeyPath = record.get_StringData(6);
-                view.Fetch();
+                
             }
 
 
@@ -190,8 +264,12 @@ namespace MsiDumper
             WindowsInstaller.View view = queryMsi("SELECT * FROM `Property` where Property='" + property + "'");
 
             Record record = view.Fetch();
+            if (record != null)
+            {
+                return record.get_StringData(2);
+            }
 
-            return record.get_StringData(2);
+            return null;
         }
 
         private MsiFile getFile(string File)
@@ -200,7 +278,7 @@ namespace MsiDumper
 
             Record record = view.Fetch();
             MsiFile msiFile = new MsiFile();
-            while (record != null)
+            if (record != null)
             {
                 msiFile.File = record.get_StringData(1);
                 msiFile.Component = record.get_StringData(2);
@@ -210,7 +288,7 @@ namespace MsiDumper
                 msiFile.Language = record.get_StringData(6);
                 msiFile.Attribute = record.get_IntegerData(7);
                 
-                view.Fetch();
+                
             }
 
             return msiFile;
@@ -223,7 +301,7 @@ namespace MsiDumper
 
             Record record = view.Fetch();
             MsiRegistry msiRegistry = new MsiRegistry();
-            while (record != null)
+            if (record != null)
             {
                 msiRegistry.Registry = record.get_StringData(1);
                 msiRegistry.Root = record.get_IntegerData(2);
@@ -231,7 +309,7 @@ namespace MsiDumper
                 msiRegistry.Name = record.get_StringData(4);
                 msiRegistry.Value = record.get_StringData(5);
                 msiRegistry.Component = record.get_StringData(6);
-                view.Fetch();
+                
             }
 
             return msiRegistry;
@@ -255,7 +333,7 @@ namespace MsiDumper
             return view;
         }
 
-        private string getCustomActionPathSet(String varName)
+        private string getCustomActionPathSet(String varName) //TODO: resolve the condition field as custom action might not be used
         {
             String resPath = null;
             WindowsInstaller.View view = null;
@@ -333,7 +411,7 @@ namespace MsiDumper
             Record properties = view.Fetch();
             while (properties !=null)
             {
-                Console.WriteLine(properties.get_StringData(1));
+                
 
                 switch (properties.get_StringData(1).ToLower())
                 {

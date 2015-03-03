@@ -20,8 +20,21 @@ namespace MsiDumper
 
         public ParseMsi(string msiFile)
         {
-            this.database = getInstaller().OpenDatabase(msiFile, MsiOpenDatabaseMode.msiOpenDatabaseModeReadOnly);
-            parseDatabase();
+            try
+            {
+                this.database = getInstaller().OpenDatabase(msiFile, MsiOpenDatabaseMode.msiOpenDatabaseModeReadOnly);
+                
+            }
+            catch (Exception ex)
+            {
+                Console.Write("Error opening msi database. " + ex.Message);
+                Environment.ExitCode = 1;
+
+            }
+            if (database != null)
+            {
+                parseDatabase();
+            }
         }
 
         public ParseMsi(string msiFile, string transForms)
@@ -45,7 +58,8 @@ namespace MsiDumper
 
         private void parseDatabase()
         {
-            
+
+            msiProperties = new MsiProperties();
             parseDirectory();
             parseProperties();
             parseShortcuts();
@@ -67,31 +81,39 @@ namespace MsiDumper
 
         }
 
+        private string cleanShortCutName(string shortCutName)
+        {                       
+           return Path.GetFileNameWithoutExtension(shortCutName.Split(new Char[] { '|' })[1]);          
+        }
+
+      
         private void parseShortcuts()
         {
             WindowsInstaller.View view = queryMsi("SELECT * FROM `Shortcut`");
 
             Record record = view.Fetch();
-
+            List<MsiShortCuts> shortCuts = new List<MsiShortCuts>();
             while (record != null)
             {
                 MsiShortCuts msiShortcut = new MsiShortCuts();
                 msiShortcut.ShortCut = record.get_StringData(1);
                 msiShortcut.StartMenuDirectory = resolveMsiVar(record.get_StringData(2));
-                msiShortcut.Name = record.get_StringData(3);
+                msiShortcut.Name = cleanShortCutName(record.get_StringData(3));
                 msiShortcut.Component = record.get_StringData(4);
 
                 if (isAdvertised(record.get_StringData(5))) 
                 {
-                    MsiComponent msiComponent = getComponent(record.get_StringData(5));
+                    Console.WriteLine("ishAdvertised...");
+                    MsiComponent msiComponent = getComponent(record.get_StringData(4));
 
                     if (msiComponent != null)
                     {
-                       msiShortcut.ShortCutTarget = resolveMsiVar(msiComponent.KeyPath);
+                        msiShortcut.ShortCutTarget = getFullDirectoryPath(msiComponent.Directory) + "\\" + msiComponent.KeyPath;
+                        Console.WriteLine("ishAdvertised with keypath..." + getFullDirectoryPath(msiComponent.Directory) + "\\" + msiComponent.KeyPath);
                     }
                     else
-                    {
-                        Console.WriteLine("Error getting shortcut component");
+                    {                        
+                        Environment.ExitCode = 2;
                     }
 
                 }
@@ -102,9 +124,13 @@ namespace MsiDumper
 
 
                 msiShortcut.workingDir = record.get_StringData(12);
-                //msiProperties.Shortcuts.Add(msiShortcut);
+                shortCuts.Add(msiShortcut);
                 record = view.Fetch();
             }
+
+            msiProperties.Shortcuts = shortCuts;
+
+
         }
 
    
@@ -118,18 +144,18 @@ namespace MsiDumper
 
             if (directory != null)
             {
-                MsiDirectory msiDirectory = (MsiDirectory)directoryTable[directory];
-
+                MsiDirectory msiDirectory = (MsiDirectory)directoryTable[directory.ToLower()];
+               
                 while (hasParent)
                 {
                     
                     if (msiDirectory != null)
                     {
                         fullDirPath = fullDirPath + "\\" + msiDirectory.getDefaultDirLongName();
-
+                       
                         if (msiDirectory.DirectoryParent != null & msiDirectory.DirectoryParent.Length > 0 && msiDirectory.Directory.ToLower().Equals(msiDirectory.DirectoryParent.ToLower()) && loopcount > 0)
                         {
-                            msiDirectory = (MsiDirectory)directoryTable[directory];
+                            msiDirectory = (MsiDirectory)directoryTable[directory.ToLower()];
                         }
                         else
                         {
@@ -154,11 +180,13 @@ namespace MsiDumper
         {
            
             string fullPath = "";
-            string[] varNameAr = varNames.Split(new char[] { '[', ']' }, StringSplitOptions.RemoveEmptyEntries);
-
-            foreach (string varName in varNameAr)
+            if (varNames != null)
             {
-                
+                string[] varNameAr = varNames.Split(new char[] { '[', ']' }, StringSplitOptions.RemoveEmptyEntries);
+
+                foreach (string varName in varNameAr)
+                {
+
                     if (varName[0].Equals("#") || varName[0].Equals("!"))
                     {
                         string cvar = Regex.Replace(varName, @"[\#\!]+", "");
@@ -166,50 +194,61 @@ namespace MsiDumper
                         if (msiFile != null)
                         {
 
-                            fullPath += "\\" + getComponentFullDir(msiFile.Component);                     
-                            
+                            fullPath += "1\\" + getComponentFullDir(msiFile.Component);
+
                         }
 
                     }
                     else if (varName[0].Equals("$"))
                     {
                         string evar = Regex.Replace(varName, @"[\#\!]+", "");
-                        fullPath += "\\" + getComponentFullDir(evar);
+                        fullPath += "2\\" + getComponentFullDir(evar);
 
                     }
                     else
                     {
-                        
+
                         //check custom action table                        
                         string resProp = getCustomActionPathSet(varName); //TODO: resolve the condition field as custom action might not be used
 
                         if (resProp != null)
                         {
-                            if (resProp.IndexOf("[") > 0)
+                            if (resProp.IndexOf("]") > 0)
                             {
-                                fullPath += "\\" + resolveMsiVar(resProp);
+                                fullPath += "3>\\" + resolveMsiVar(resProp) + "<3";
+
                             }
                             else
                             {
-                                fullPath += "\\" + getFullDirectoryPath(resProp);
+                                fullPath += "4\\" + getFullDirectoryPath(resProp);
                             }
 
-                            return fullPath;
+
                         }
-
-                        string rsProp = getMsiProperty(varName);
-
-                        if (rsProp != null)
+                        else
                         {
-                            fullPath += "\\" + rsProp;
+
+                            string rsProp = getMsiProperty(varName);
+
+                            if (rsProp != null)
+                            {
+                                fullPath += "5>\\" + rsProp + "<5";
+                            }
                         }
 
-                        fullPath += "\\" + getFullDirectoryPath(getCustomActionPathSet(varName));
+
 
                     }
-                
+
+                }
+                Console.WriteLine("================" + fullPath);
+                return fullPath;
             }
-            return fullPath;
+            else
+            {
+                return null;
+            }
+            
         }
 
         private string getComponentFullDir(string component) //limited
@@ -241,6 +280,7 @@ namespace MsiDumper
         private MsiComponent getComponent(string componentName)
         {
             WindowsInstaller.View view = queryMsi("SELECT * FROM `Component` where Component='" + componentName + "'");
+           
 
             Record record = view.Fetch();
             MsiComponent msiComponent = new MsiComponent();
@@ -252,6 +292,7 @@ namespace MsiDumper
                 msiComponent.Atribute = record.get_IntegerData(4);
                 msiComponent.Condition = record.get_StringData(5);
                 msiComponent.KeyPath = record.get_StringData(6);
+                
                 
             }
 
@@ -337,6 +378,7 @@ namespace MsiDumper
         {
             String resPath = null;
             WindowsInstaller.View view = null;
+            
             try
             {
                 view = database.OpenView("SELECT * FROM `CustomAction` where Source='" + varName + "'");
@@ -359,13 +401,11 @@ namespace MsiDumper
                 }
                 properties = view.Fetch();
             }
+            Console.WriteLine("51 " + resPath);
             return resPath;
         }
 
-        private void parseShortCuts()
-        {
-
-        }
+     
 
         private void parseDirectory()
         {
@@ -385,7 +425,7 @@ namespace MsiDumper
             Record properties = view.Fetch();
             while (properties != null)
             {
-                directoryTable.Add(properties.get_StringData(1), new MsiDirectory(properties.get_StringData(1), properties.get_StringData(2), properties.get_StringData(3)));
+                directoryTable.Add(properties.get_StringData(1).ToLower(), new MsiDirectory(properties.get_StringData(1), properties.get_StringData(2), properties.get_StringData(3)));
                 properties = view.Fetch();
             }
         }
@@ -419,55 +459,55 @@ namespace MsiDumper
                         msiProperties.Manufacturer = properties.get_StringData(2);
                         break;
                     case "productname":
-                        msiProperties.Manufacturer = properties.get_StringData(2);
+                        msiProperties.ProductName = properties.get_StringData(2);
                         break;
                     case "arpcomments":
-                        msiProperties.Manufacturer = properties.get_StringData(2);
+                        msiProperties.ArpComments = properties.get_StringData(2);
                         break;
                     case "arphelplink":
-                        msiProperties.Manufacturer = properties.get_StringData(2);
+                        msiProperties.ArpHelpLink = properties.get_StringData(2);
                         break;
                     case "arpcontact":
-                        msiProperties.Manufacturer = properties.get_StringData(2);
+                        msiProperties.ArpContact = properties.get_StringData(2);
                         break;
                     case "allusers":
-                        msiProperties.Manufacturer = properties.get_StringData(2);
+                        msiProperties.AllUsers = properties.get_StringData(2);
                         break;
                     case "arpinstalllocation":
-                        msiProperties.Manufacturer = properties.get_StringData(2);
+                        msiProperties.ArpInstallLocation = properties.get_StringData(2);
                         break;
                     case "arptelephone":
-                        msiProperties.Manufacturer = properties.get_StringData(2);
+                        msiProperties.ArpTelephone = properties.get_StringData(2);
                         break;
                     case "primaryfolder":
-                        msiProperties.Manufacturer = properties.get_StringData(2);
+                        msiProperties.PrimaryFolder = properties.get_StringData(2);
                         break;
                     case "msiinstallperuser":
-                        msiProperties.Manufacturer = properties.get_StringData(2);
+                        msiProperties.MsiInstallPerUser = properties.get_StringData(2);
                         break;
                     case "reboot":
-                        msiProperties.Manufacturer = properties.get_StringData(2);
+                        msiProperties.Reboot = properties.get_StringData(2);
                         break;
                     case "rootdrive":
-                        msiProperties.Manufacturer = properties.get_StringData(2);
+                        msiProperties.RootDrive = properties.get_StringData(2);
                         break;
                     case "targetdir":
-                        msiProperties.Manufacturer = properties.get_StringData(2);
+                        msiProperties.TargetDir = properties.get_StringData(2);
                         break;
                     case "installdir":
-                        msiProperties.Manufacturer = properties.get_StringData(2);
+                        msiProperties.InstallDir = properties.get_StringData(2);
                         break;
                     case "upgradecode":
-                        msiProperties.Manufacturer = properties.get_StringData(2);
+                        msiProperties.UpgradeCode = properties.get_StringData(2);
                         break;
                     case "productcode":
-                        msiProperties.Manufacturer = properties.get_StringData(2);
+                        msiProperties.ProductCode = properties.get_StringData(2);
                         break;
                     case "productversion":
-                        msiProperties.Manufacturer = properties.get_StringData(2);
+                        msiProperties.ProductVersion = properties.get_StringData(2);
                         break;
                     case "productlanguage":
-                        msiProperties.Manufacturer = properties.get_StringData(2);
+                        msiProperties.ProductLanguage = properties.get_StringData(2);
                         break;
                 }
 
@@ -479,8 +519,5 @@ namespace MsiDumper
         }
 
 
-
-
-        
     }
 }

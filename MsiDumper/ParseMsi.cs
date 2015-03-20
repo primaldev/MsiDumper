@@ -17,6 +17,7 @@ namespace MsiDumper
         MsiProperties msiProperties;
         Hashtable directoryTable;
         Database database;
+        Session msiSession;
 
         public ParseMsi(string msiFile)
         {
@@ -58,6 +59,11 @@ namespace MsiDumper
 
         private void parseDatabase()
         {
+            getInstaller().UILevel = MsiUILevel.msiUILevelNone;
+           msiSession = getInstaller().OpenPackage(database, 0);
+           
+           msiSession.DoAction("CostInitialize");
+           msiSession.DoAction("CostFinalize"); 
 
             msiProperties = new MsiProperties();
             parseDirectory();
@@ -86,7 +92,27 @@ namespace MsiDumper
            return Path.GetFileNameWithoutExtension(shortCutName.Split(new Char[] { '|' })[1]);          
         }
 
-      
+
+        private string getTargetPath(string target)
+        {
+
+            try
+            {
+                return msiSession.get_TargetPath(target);
+            }
+            catch (Exception)
+            {
+                
+               //ignore
+            }
+
+            return null;
+        
+        
+        }
+
+
+
         private void parseShortcuts()
         {
             WindowsInstaller.View view = queryMsi("SELECT * FROM `Shortcut`");
@@ -108,8 +134,9 @@ namespace MsiDumper
 
                     if (msiComponent != null)
                     {
-                        msiShortcut.ShortCutTarget = getFullDirectoryPath(msiComponent.Directory) + "\\" + msiComponent.KeyPath;
-                        Console.WriteLine("ishAdvertised with keypath..." + getFullDirectoryPath(msiComponent.Directory) + "\\" + msiComponent.KeyPath);
+                        msiShortcut.ShortCutTarget = getTargetPath(msiComponent.Directory) + getFile(msiComponent.KeyPath).FileName;
+                        Console.WriteLine("ishAdvertised with keypath..." + msiComponent.KeyPath + "::" + getTargetPath(msiComponent.Directory)  + getFile(msiComponent.KeyPath).FileName);
+                        
                     }
                     else
                     {                        
@@ -119,11 +146,11 @@ namespace MsiDumper
                 }
                 else
                 {
-                   msiShortcut.ShortCutTarget = resolveMsiVar(record.get_StringData(5));
+                    msiShortcut.ShortCutTarget = resolveMsiVar(record.get_StringData(5));
                 }
 
 
-                msiShortcut.workingDir = record.get_StringData(12);
+                msiShortcut.workingDir = resolveMsiVar(record.get_StringData(12));
                 shortCuts.Add(msiShortcut);
                 record = view.Fetch();
             }
@@ -133,47 +160,9 @@ namespace MsiDumper
 
         }
 
+        
    
         //enumerate the Directory table to build a path string
-        private string getFullDirectoryPath(string directory)
-        {
-            
-            String fullDirPath = "";
-            Boolean hasParent = true;
-            int loopcount = 256; //prevent endless loop
-
-            if (directory != null)
-            {
-                MsiDirectory msiDirectory = (MsiDirectory)directoryTable[directory.ToLower()];
-               
-                while (hasParent)
-                {
-                    
-                    if (msiDirectory != null)
-                    {
-                        fullDirPath = fullDirPath + "\\" + msiDirectory.getDefaultDirLongName();
-                       
-                        if (msiDirectory.DirectoryParent != null & msiDirectory.DirectoryParent.Length > 0 && msiDirectory.Directory.ToLower().Equals(msiDirectory.DirectoryParent.ToLower()) && loopcount > 0)
-                        {
-                            msiDirectory = (MsiDirectory)directoryTable[directory.ToLower()];
-                        }
-                        else
-                        {
-                            hasParent = false;
-                        }
-
-                    }
-                    else
-                    {
-                        hasParent = false;
-                    }
-
-                    loopcount--;
-                }
-            }
-            return fullDirPath;
-
-        }
 
 
         private string resolveMsiVar(String varNames) //
@@ -194,7 +183,7 @@ namespace MsiDumper
                         if (msiFile != null)
                         {
 
-                            fullPath += "1\\" + getComponentFullDir(msiFile.Component);
+                            fullPath += getTargetPath(msiFile.Component);
 
                         }
 
@@ -202,7 +191,7 @@ namespace MsiDumper
                     else if (varName[0].Equals("$"))
                     {
                         string evar = Regex.Replace(varName, @"[\#\!]+", "");
-                        fullPath += "2\\" + getComponentFullDir(evar);
+                        fullPath +=  getTargetPath(evar);
 
                     }
                     else
@@ -215,12 +204,12 @@ namespace MsiDumper
                         {
                             if (resProp.IndexOf("]") > 0)
                             {
-                                fullPath += "3>\\" + resolveMsiVar(resProp) + "<3";
+                                fullPath += resolveMsiVar(resProp);
 
                             }
                             else
                             {
-                                fullPath += "4\\" + getFullDirectoryPath(resProp);
+                                fullPath +=  getTargetPath(resProp);
                             }
 
 
@@ -232,7 +221,7 @@ namespace MsiDumper
 
                             if (rsProp != null)
                             {
-                                fullPath += "5>\\" + rsProp + "<5";
+                                fullPath +=  rsProp;
                             }
                         }
 
@@ -241,7 +230,7 @@ namespace MsiDumper
                     }
 
                 }
-                Console.WriteLine("================" + fullPath);
+                
                 return fullPath;
             }
             else
@@ -257,7 +246,7 @@ namespace MsiDumper
             MsiComponent msiComponent = getComponent(component);
             if (msiComponent != null)
             {
-                return getFullDirectoryPath(msiComponent.Directory);
+                return getTargetPath(msiComponent.Directory);
             }
 
             return ""; //not null but emty string
@@ -302,13 +291,18 @@ namespace MsiDumper
 
         private string getMsiProperty(string property)
         {
-            WindowsInstaller.View view = queryMsi("SELECT * FROM `Property` where Property='" + property + "'");
 
-            Record record = view.Fetch();
-            if (record != null)
+
+            try
             {
-                return record.get_StringData(2);
+                return msiSession.get_Property(property);
             }
+            catch (Exception)
+            {
+                
+                //ignore
+            }
+     
 
             return null;
         }
@@ -401,7 +395,7 @@ namespace MsiDumper
                 }
                 properties = view.Fetch();
             }
-            Console.WriteLine("51 " + resPath);
+            Console.WriteLine("51 " + varName + "--" + resPath);
             return resPath;
         }
 
@@ -519,5 +513,7 @@ namespace MsiDumper
         }
 
 
+
+      
     }
 }

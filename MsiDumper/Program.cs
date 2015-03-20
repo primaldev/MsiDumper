@@ -13,7 +13,7 @@ namespace MsiDumper
         
         static void Main(string[] args)
         {
-            new ParseMsi("d:\\temp\\AcroPro.msi");
+            new ParseMsi("d:\\temp\\Configuration_Manager_2012_R2_SDK_Setup.msi");
 
         }
 
